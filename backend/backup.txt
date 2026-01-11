@@ -1,0 +1,2301 @@
+require("dotenv").config();
+const SECRET_KEY = process.env.SECRET_KEY || "123";
+
+let lastInventoryState = {}; // Pamtimo zadnje stanje inventara
+let notificationCooldown = new Set(); // Sprečavamo duple notifikacije u kratkom vremenu
+
+
+
+
+
+
+const RBAC_CONFIG = {
+    roles: {
+        'admin': ['*'], // Admin ima sve dozvole
+
+        'Inženjer sigurnosti': [
+            'security.logs.read',      // Čitanje sigurnosnih logova
+            'security.ips.read',       // Pregled blokiranih IP-ova
+            'security.ips.manage',     // Upravljanje IP blokadama
+            'security.users.read',     // Pregled zaključanih korisnika
+            'security.users.manage',   // Otključavanje korisnika
+            'security.stats.read',     // Pregled statistika
+            'security.debug',          // Debug funkcije (opciono)
+            'users.read',              // Pregled korisnika
+            'profile.*',               // Upravljanje profilom
+            'reports.read',             // Pregled izvještaja
+            'tasks.read',       // Može vidjeti zadatke
+            'tasks.update'      // Može završiti zadatke
+        ],
+        'Menadžer inventara': [
+            'inventory.read',           // Pregled inventara
+            'inventory.create',         // Dodavanje novog goriva
+            'inventory.update',         // Ažuriranje goriva
+            'inventory.delete',         // Brisanje goriva
+            'fuel-production.read',     // Pregled proizvodnje
+            'fuel-production.create',   // Dodavanje proizvodnje
+            'fuel-forecast.read',       // Pregled prognoza
+            'reports.read',             // Pregled izvještaja
+            'profile.*',                 // Upravljanje profilom
+            'tasks.read',
+            'tasks.update'
+        ],
+
+        'Finansijski analitičar': [
+            'reports.read',         // SVE izvještaje (čitaj, generiš)
+            'revenue.*',         // SVE o prihodima
+            'capex.*',           // SVE o investicijama
+            'fuel-profitability.*', // Analiza profitabilnosti
+            'fuel-production.read', // Samo čitanje proizvodnje
+            'profile.*',          // Svoje profile operacije
+            'tasks.read',
+            'tasks.update'
+        ],
+
+        'Koordinator stanica': [
+            'gas-stations.read',    // Pregled stanica
+            'gas-stations.create',  // Dodavanje novih stanica
+            'gas-stations.update',  // Uređivanje postojećih stanica
+            'gas-stations.delete',  // Brisanje stanica
+            'inventory.read',       // Pregled inventara
+            'reports.read',         // Pregled izvještaja
+            'profile.*',             // Upravljanje profilom
+            'tasks.read',
+            'tasks.update'
+        ]
+    }
+};
+
+// DODAJ OVAJ MIDDLEWARE PRIJE checkPermission
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+
+    console.log("🔐 authenticateToken - Token:", token ? "Present" : "Missing");
+
+    if (!token) {
+        console.log("❌ Nema tokena");
+        return res.status(401).json({ error: "Pristup odbijen! Niste prijavljeni." });
+    }
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        console.log("✅ Token validan za korisnika:", decoded.username, "role:", decoded.role);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        console.log("❌ Token invalidan:", error.message);
+        return res.status(403).json({ error: "Token nije validan!" });
+    }
+};
+
+// 📌 RBAC MIDDLEWARE SA DETALJNIM DEBUG-OM
+// 📌 RBAC MIDDLEWARE SA DETALJNIM DEBUG-OM
+const checkPermission = (requiredPermission) => {
+    return (req, res, next) => {
+        const authHeader = req.headers["authorization"];
+
+        console.log("🔍 RBAC DEBUG - Authorization header:", authHeader);
+
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            console.log("❌ RBAC - NEMA ILI NEVALIDAN AUTHORIZATION HEADER!");
+            return res.status(401).json({ error: "Pristup odbijen! Niste prijavljeni." });
+        }
+
+        const token = authHeader.split(" ")[1];
+
+        try {
+            // KORISTI JWT.VERIFY UMJESTO JWT.DECODE!
+            const decoded = jwt.verify(token, SECRET_KEY);
+
+            console.log("🔐 RBAC DEBUG - Decoded token:", decoded);
+            console.log("🔐 RBAC DEBUG - Tražena dozvola:", requiredPermission);
+
+            const userRole = decoded.role;
+
+            if (!userRole) {
+                console.log("❌ RBAC - DECODED TOKEN NEMA ROLE!");
+                return res.status(403).json({ error: "Korisnik nema dodijeljenu ulogu!" });
+            }
+
+            // Admin ima sve dozvole
+            if (userRole === 'admin') {
+                console.log("✅ RBAC - ADMIN - ima sve dozvole");
+                req.user = decoded;
+                return next();
+            }
+
+            const userPermissions = RBAC_CONFIG.roles[userRole];
+
+            if (!userPermissions) {
+                console.log("❌ RBAC - Uloga nije pronađena u RBAC_CONFIG:", userRole);
+                return res.status(403).json({ error: "Korisnička uloga nije pronađena!" });
+            }
+
+            console.log("📋 RBAC - Dostupne dozvole za ulogu", userRole, ":", userPermissions);
+
+            const hasPermission = userPermissions.some(permission => {
+                if (permission === '*') {
+                    console.log("✅ RBAC - Wildcard * - sve dozvoljeno");
+                    return true;
+                }
+                if (permission === requiredPermission) {
+                    console.log("✅ RBAC - Tačna dozvola pronađena:", permission);
+                    return true;
+                }
+                if (permission.endsWith('.*')) {
+                    const permissionPrefix = permission.replace('.*', '');
+                    const hasWildcard = requiredPermission.startsWith(permissionPrefix);
+                    if (hasWildcard) {
+                        console.log("✅ RBAC - Wildcard podudaranje:", permission, "->", requiredPermission);
+                    }
+                    return hasWildcard;
+                }
+                return false;
+            });
+
+            if (!hasPermission) {
+                console.log("❌ RBAC - NEMA DOZVOLE:", userRole, "nema dozvolu za", requiredPermission);
+                return res.status(403).json({ error: "Nemate dozvolu za ovu akciju!" });
+            }
+
+            console.log("✅ RBAC - DOZVOLA ODOBRENA za:", userRole);
+            req.user = decoded;
+            next();
+
+        } catch (error) {
+            console.error("❌ RBAC - Greška u RBAC middleware:", error.message);
+
+            if (error.name === 'TokenExpiredError') {
+                return res.status(401).json({ error: "Token je istekao! Prijavite se ponovo." });
+            }
+            if (error.name === 'JsonWebTokenError') {
+                return res.status(403).json({ error: "Neispravan token!" });
+            }
+
+            return res.status(500).json({ error: "Greška u autorizaciji!" });
+        }
+    };
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const express = require("express");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const db = require("./database");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const http = require("http"); // Dodato za WebSockets
+const { Server } = require("socket.io"); // Socket.IO server
+const multer = require('multer');
+const path = require('path');
+
+const app = express();
+const PORT = 5000;
+
+
+
+const fs = require('fs');
+const uploadDir = path.join(__dirname, '../rafinerija/public/uploads'); // Apsolutna putanja
+
+
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Kreiranje HTTP servera za Socket.IO
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*" } // Omogućava pristup sa bilo koje domene
+});
+
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.json()); // Omogućava parsiranje JSON podataka
+app.use(express.urlencoded({ extended: true })); // Omogućava parsiranje URL parametara
+
+app.use('/uploads', express.static('public/uploads'));
+app.use('/uploads', express.static(path.join(__dirname, '../rafinerija/public/uploads')));
+
+// Configure storage for uploaded files
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir); // Spremamo slike u frontend direktorij
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname)); // Jedinstveno ime
+    },
+});
+const fileFilter = (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only images are allowed!'), false);
+    }
+};
+
+const upload = multer({ storage, fileFilter });
+
+// Endpoint for uploading profile images
+app.post('/upload-profile-image', upload.single('profileImage'), (req, res) => {
+    console.log('Request body:', req.body); // Log the request body
+    console.log('Uploaded file:', req.file); // Log the uploaded file
+
+    if (!req.file) {
+        console.error('No file uploaded');
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const imagePath = `/uploads/${req.file.filename}`;
+    res.json({ imagePath });
+});
+
+
+
+
+// 📌 WEB SOCKET - ISPRAVLJENA VERZIJA
+io.on("connection", (socket) => {
+    console.log("✅ Klijent povezan:", socket.id);
+
+    // DEBUG: Log sve sobe kada se korisnik spoji
+    socket.on("join_user_rooms", (userId, userRole) => {
+        console.log(`🔗 JOIN REQUEST from socket ${socket.id}:`);
+        console.log(`   - User ID: ${userId}`);
+        console.log(`   - User Role: ${userRole}`);
+
+        // Ostavi stare sobe
+        const rooms = Array.from(socket.rooms);
+        rooms.forEach(room => {
+            if (room !== socket.id) {
+                socket.leave(room);
+                console.log(`   - Left room: ${room}`);
+            }
+        });
+
+        // Join u nove sobe
+        if (userId) {
+            socket.join(`user_${userId}`);
+            console.log(`   ✅ Joined: user_${userId}`);
+        }
+        if (userRole) {
+            socket.join(`role_${userRole}`);
+            console.log(`   ✅ Joined: role_${userRole}`);
+        }
+
+        // ADMIN je također u admin sobi
+        if (userRole === 'admin') {
+            socket.join('admin');
+            console.log(`   ✅ Joined: admin`);
+        }
+
+        // Svi su u public sobi
+        socket.join('public');
+        console.log(`   ✅ Joined: public`);
+
+        // DEBUG: Pokaži finalne sobe
+        setTimeout(() => {
+            const finalRooms = Array.from(socket.rooms);
+            console.log(`   📍 Final rooms for socket ${socket.id}:`, finalRooms);
+        }, 100);
+    });
+
+    // Task kreiranje - POBOLJŠANA VERZIJA
+    socket.on("task_created", (taskData) => {
+        console.log("=".repeat(60));
+        console.log("📢 SERVER: Nova task notifikacija primljena");
+        console.log("📦 Task data:", JSON.stringify(taskData, null, 2));
+
+        // DEBUG: Prikaži sve sobe na serveru
+        console.log("🏠 All rooms on server:");
+        const rooms = io.sockets.adapter.rooms;
+        rooms.forEach((sockets, roomName) => {
+            console.log(`   - ${roomName}: ${sockets.size} klijenata`);
+        });
+
+        // KREIRAJ NOTIFIKACIJU OBJEKAT
+        const notificationData = {
+            task: {
+                id: taskData.taskId || taskData.id,
+                title: taskData.title || "Nova obaveza",
+                description: taskData.description
+            },
+            assignedTo: taskData.assigned_to_user_id || taskData.assignedTo,
+            assignedRole: taskData.assigned_to_role || taskData.assignedRole,
+            assignedByName: taskData.assignedByName || taskData.createdBy || "Administrator",
+            isPublic: !taskData.assigned_to_user_id && !taskData.assigned_to_role,
+            timestamp: new Date().toISOString()
+        };
+
+        console.log("🔔 Notification to send:", JSON.stringify(notificationData, null, 2));
+
+        // ŠALJI NOTIFIKACIJE NA PRAVI NAČIN
+
+        // 1. Ako je dodijeljen konkretnom korisniku
+        if (notificationData.assignedTo) {
+            const userRoom = `user_${notificationData.assignedTo}`;
+            console.log(`🎯 Šaljem notifikaciju u sobu: ${userRoom}`);
+
+            // Provjeri da li soba postoji
+            if (rooms.has(userRoom)) {
+                io.to(userRoom).emit("new_task", notificationData);
+                console.log(`   ✅ Notifikacija poslana u ${userRoom}`);
+            } else {
+                console.log(`   ⚠️ Soba ${userRoom} ne postoji!`);
+            }
+        }
+
+        // 2. Ako je dodijeljen ulozi
+        else if (notificationData.assignedRole) {
+            const roleRoom = `role_${notificationData.assignedRole}`;
+            console.log(`🎯 Šaljem notifikaciju u sobu: ${roleRoom}`);
+
+            if (rooms.has(roleRoom)) {
+                io.to(roleRoom).emit("new_task", notificationData);
+                console.log(`   ✅ Notifikacija poslana u ${roleRoom}`);
+            } else {
+                console.log(`   ⚠️ Soba ${roleRoom} ne postoji!`);
+            }
+        }
+
+        // 3. Ako je JAVNI zadatak (za sve)
+        else {
+            console.log(`🌍 Šaljem JAVNI zadatak svima`);
+            io.emit("new_task", {
+                ...notificationData,
+                debug: "Public task - sent to everyone"
+            });
+            console.log(`   ✅ Javna notifikacija poslana svima`);
+        }
+
+        // 4. ADMINI UVJEK TREBAJU DOBITI NOTIFIKACIJU
+        console.log(`👑 Šaljem notifikaciju ADMINIMA`);
+        io.to('admin').emit("new_task", {
+            ...notificationData,
+            isAdminNotification: true,
+            debug: "Admin notification"
+        });
+
+        // 5. Pošalji potvrdu korisniku koji je kreirao zadatak
+        if (taskData.createdBySocketId) {
+            io.to(taskData.createdBySocketId).emit("task_created_confirmation", {
+                success: true,
+                message: "✅ Zadatak uspješno kreiran i notifikacija poslana!",
+                taskId: notificationData.task.id,
+                notificationSent: true
+            });
+        }
+
+        console.log("=".repeat(60));
+    });
+
+    socket.on("disconnect", () => {
+        console.log("❌ Klijent odspojen:", socket.id);
+    });
+});
+
+// 📌 Dobavljanje svih zaliha goriva (GET)
+app.get("/inventory", checkPermission('inventory.read'),(req, res) => {
+    db.all("SELECT * FROM inventory", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// 📌 Dodavanje novog goriva (POST)
+app.post("/inventory", checkPermission('inventory.create'),(req, res) => {
+    const { type, quantity, status, price } = req.body;
+    db.run(
+        "INSERT INTO inventory (type, quantity, status, price) VALUES (?, ?, ?, ?)",
+        [type, quantity, status, price],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ id: this.lastID, type, quantity, status, price });
+        }
+    );
+});
+
+// 📌 Ažuriranje postojećeg goriva (PUT)
+app.put("/inventory/:id", checkPermission('inventory.update'), (req, res) => {
+    const { id } = req.params;
+    const { type, quantity, status, price } = req.body;
+    db.run(
+        "UPDATE inventory SET type = ?, quantity = ?, status = ?, price = ? WHERE id = ?",
+        [type, quantity, status, price, id],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "Podaci ažurirani!" });
+        }
+    );
+});
+
+// 📌 Brisanje goriva (DELETE)
+app.delete("/inventory/:id", checkPermission('inventory.delete'), (req, res) => {
+    const { id } = req.params;
+    db.run("DELETE FROM inventory WHERE id = ?", id, function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Zapis obrisan!" });
+    });
+});
+
+// 📌 Registracija korisnika (POST)
+app.post("/register", (req, res) => {
+    const { username, password } = req.body;
+    const hashedPassword = bcrypt.hashSync(password, 10);
+
+    db.run(
+        "INSERT INTO users (username, password) VALUES (?, ?)",
+        [username, hashedPassword],
+        function (err) {
+            if (err) {
+                res.status(400).json({ error: "Korisnik već postoji!" });
+                return;
+            }
+            res.json({ message: "Registracija uspješna!" });
+        }
+    );
+});
+
+
+
+
+// 📌 Zaštićena ruta (test)
+app.get("/protected", (req, res) => {
+    const token = req.headers["authorization"];
+    if (!token) return res.status(401).json({ error: "Pristup odbijen!" });
+
+    jwt.verify(token.split(" ")[1], SECRET_KEY, (err, decoded) => {
+        if (err) return res.status(403).json({ error: "Neispravan token!" });
+        res.json({ message: "Dobrodošli u zaštićenu zonu!", user: decoded });
+    });
+});
+
+// Za admina
+
+const checkAdmin = (req, res, next) => {
+    const token = req.headers["authorization"];
+    if (!token) return res.status(401).json({ error: "Pristup odbijen!" });
+
+    jwt.verify(token.split(" ")[1], SECRET_KEY, (err, decoded) => {
+        if (err) return res.status(403).json({ error: "Neispravan token!" });
+
+        if (decoded.role !== "admin") return res.status(403).json({ error: "Nemaš administratorske privilegije!" });
+
+        req.user = decoded;
+        next();
+    });
+};
+
+// 📌 Ruta samo za admina
+app.get("/dashboard", checkPermission('admin.*'), (req, res) => {
+    res.json({ message: "Dobrodošao Admin!", user: req.user });
+});
+
+
+// ✅ Dodaj nove podatke o proizvodnji goriva
+app.post("/api/fuel-production", checkPermission('fuel-production.read'), (req, res) => {
+    const { month, production_tons, fuel_type, refinery } = req.body;
+    db.run(
+        `INSERT INTO fuel_production (month, production_tons, fuel_type, refinery) VALUES (?, ?, ?, ?)`,
+        [month, production_tons, fuel_type, refinery],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "New fuel production data added", id: this.lastID });
+        }
+    );
+});
+
+
+// 📌 **Ruta za dodavanje novih podataka (za testiranje)**
+app.post("/api/fuel-production", checkPermission('fuel-production.create'),(req, res) => {
+    const { month, year, production_tons, fuel_type, refinery } = req.body;
+
+    if (!month || !year || !production_tons || !fuel_type || !refinery) {
+        return res.status(400).json({ error: "Svi podaci su obavezni!" });
+    }
+
+    db.run(
+        `INSERT INTO fuel_production (month, year, production_tons, fuel_type, refinery)
+         VALUES (?, ?, ?, ?, ?)`,
+        [month, year, production_tons, fuel_type, refinery],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "Podaci uspješno dodani!", id: this.lastID });
+        }
+    );
+});
+
+// 📌 API ruta za dohvaćanje svih rafinerija
+app.get("/api/refineries", (req, res) => {
+    db.all("SELECT DISTINCT refinery FROM fuel_production", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+
+// 📌 API ruta za dohvaćanje podataka o proizvodnji goriva
+app.get("/api/fuel-production", (req, res) => {
+    const fuelType = req.query.fuelType;
+    const refinery = req.query.refinery;
+    const year = req.query.year;
+
+    let query = `SELECT month, fuel_type, SUM(production_tons) as production_tons FROM fuel_production WHERE 1=1`;
+    let params = [];
+
+    if (fuelType && fuelType !== "") {
+        query += " AND fuel_type = ?";
+        params.push(fuelType);
+    }
+
+    if (refinery && refinery !== "") {
+        query += " AND refinery = ?";
+        params.push(refinery);
+    }
+
+    if (year && year !== "") {
+        query += " AND year = ?";
+        params.push(year);
+    }
+
+    query += " GROUP BY month, fuel_type ORDER BY month ASC";
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            console.error("SQL greška:", err.message);
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// 📌 API ruta za dohvaćanje svih vrsta goriva
+app.get("/api/fuel-types", (req, res) => {
+    db.all("SELECT DISTINCT fuel_type FROM fuel_production", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows.map(row => row.fuel_type));
+    });
+});
+
+// 📌 API ruta za dohvaćanje svih rafinerija
+app.get("/api/refineries", (req, res) => {
+    db.all("SELECT DISTINCT refinery FROM fuel_production", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows.map(row => row.refinery));
+    });
+});
+
+// 📌 API ruta za dohvaćanje dostupnih godina
+app.get("/api/years", (req, res) => {
+    db.all("SELECT DISTINCT year FROM fuel_production ORDER BY year ASC", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows.map(row => row.year));
+    });
+});
+
+// 📌 Predviđanje potrošnje goriva na osnovu prošlih godina
+app.get("/api/fuel-forecast", checkPermission('fuel-forecast.read'), (req, res) => {
+    db.all(
+        `SELECT month, year, SUM(production_tons) as total_production
+         FROM fuel_production
+         GROUP BY year, month
+         ORDER BY year, month`,
+        [],
+        (err, rows) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+
+            if (rows.length === 0) {
+                res.json([]);
+                return;
+            }
+
+            const monthOrder = ["January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"];
+
+            // 1. GRUPIRANJE UKUPNE PROIZVODNJE PO GODINAMA I MJESECIMA
+            const dataByYearMonth = {};
+            const years = [];
+
+            rows.forEach(row => {
+                if (!dataByYearMonth[row.year]) {
+                    dataByYearMonth[row.year] = {};
+                    years.push(row.year);
+                }
+                dataByYearMonth[row.year][row.month] = row.total_production;
+            });
+
+            years.sort((a, b) => a - b);
+
+            // 2. POPUNA PRAZNIH MJESECI - koristimo podatke iz istog kvartala
+            const completedData = JSON.parse(JSON.stringify(dataByYearMonth));
+
+            years.forEach(year => {
+                const yearData = completedData[year];
+                const quarters = {
+                    "Q1": ["January", "February", "March"],
+                    "Q2": ["April", "May", "June"],
+                    "Q3": ["July", "August", "September"],
+                    "Q4": ["October", "November", "December"]
+                };
+
+                // Za svaki kvartal, popuni prazne mjesece
+                Object.values(quarters).forEach(quarterMonths => {
+                    const filledMonths = quarterMonths.filter(month => yearData[month]);
+                    const emptyMonths = quarterMonths.filter(month => !yearData[month]);
+
+                    if (filledMonths.length > 0 && emptyMonths.length > 0) {
+                        const quarterAvg = filledMonths.reduce((sum, month) => sum + yearData[month], 0) / filledMonths.length;
+                        emptyMonths.forEach(month => {
+                            completedData[year][month] = quarterAvg;
+                        });
+                    }
+                });
+            });
+
+            // 3. IZRAČUN PROSJEKA PO MJESECU IZ SVIH GODINA
+            const monthlyAverages = {};
+
+            monthOrder.forEach(month => {
+                const values = years.map(year => completedData[year][month]).filter(val => val);
+                if (values.length > 0) {
+                    monthlyAverages[month] = values.reduce((a, b) => a + b, 0) / values.length;
+                }
+            });
+
+            // 4. ANALIZA TRENDA
+            let yearlyGrowth = 0;
+            if (years.length >= 2) {
+                const firstYear = years[0];
+                const lastYear = years[years.length - 1];
+
+                const firstYearTotal = monthOrder.reduce((sum, month) => sum + (completedData[firstYear][month] || 0), 0);
+                const lastYearTotal = monthOrder.reduce((sum, month) => sum + (completedData[lastYear][month] || 0), 0);
+
+                const yearDiff = lastYear - firstYear;
+                yearlyGrowth = yearDiff > 0 ? (lastYearTotal - firstYearTotal) / firstYearTotal / yearDiff : 0;
+            }
+
+            // 5. GENERIRANJE PROGNOZE
+            const now = new Date();
+            let currentMonthIndex = (now.getMonth() + 1) % 12;
+            let currentYear = currentMonthIndex === 0 ? now.getFullYear() + 1 : now.getFullYear();
+
+            const finalForecast = [];
+
+            for (let i = 0; i < 12; i++) {
+                const month = monthOrder[currentMonthIndex];
+                const baseValue = monthlyAverages[month] || Object.values(monthlyAverages)[0] || 0;
+
+                // Realan rast (max ±10% godišnje)
+                const realisticGrowth = Math.max(-0.1, Math.min(0.1, yearlyGrowth));
+                const predictedValue = baseValue * (1 + realisticGrowth);
+
+                finalForecast.push({
+                    month: month,
+                    year: currentYear,
+                    predicted_production: Math.round(predictedValue),
+                    unit: "tons"
+                });
+
+                currentMonthIndex = (currentMonthIndex + 1) % 12;
+                if (currentMonthIndex === 0) currentYear++;
+            }
+
+            res.json(finalForecast);
+        }
+    );
+});
+
+app.get("/api/reports", checkPermission('reports.read'),(req, res) => {
+    db.all(`
+        SELECT
+            month,
+            SUM(production_tons) as totalProduction,
+            SUM(production_tons * 1.5) as totalIncome,
+            SUM(production_tons * 0.8) as totalConsumption
+        FROM fuel_production
+        GROUP BY month
+        ORDER BY month ASC
+    `, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+
+
+
+
+
+
+
+
+// 13.2.2025 ZA USERS U DASHBOARDU
+
+// 📌 Dobavljanje svih korisnika (GET)
+app.get("/users", checkAdmin, (req, res) => {
+    db.all("SELECT * FROM users", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+
+// 📌 Dodavanje novog korisnika (POST) - ISPRAVLJENO
+app.post("/users", checkAdmin, (req, res) => {
+    const { ime, prezime, email, username, password, role, profile_image } = req.body;
+
+    console.log('🔐 Password received:', password); // DEBUG
+
+    // 👇 PROVJERI DA LI JE LOZINKA VEĆ HASHIRANA
+    let hashedPassword;
+    if (password.startsWith('$2a$') || password.startsWith('$2b$')) {
+        // Ako počinje sa bcrypt patternom, već je hashirana
+        hashedPassword = password;
+        console.log('✅ Password je već hashiran');
+    } else {
+        // Ako nije, hashiraj je
+        hashedPassword = bcrypt.hashSync(password, 10);
+        console.log('🔐 Password hashiran na backendu');
+    }
+
+    db.run(
+        "INSERT INTO users (ime, prezime, email, username, password, role, profile_image) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [ime, prezime, email, username, hashedPassword, role, profile_image || null],
+        function (err) {
+            if (err) {
+                console.error('❌ Database error:', err);
+                res.status(400).json({ error: "Korisnik već postoji!" });
+                return;
+            }
+            res.json({ message: "Korisnik uspješno dodan!", id: this.lastID });
+        }
+    );
+});
+
+// 📌 Ažuriranje korisnika (PUT)
+app.put('/users/:id', checkAdmin, (req, res) => {
+    const { id } = req.params;
+    const { ime, prezime, username, email, role, profile_image } = req.body;
+
+    db.run(
+        'UPDATE users SET ime = ?, prezime = ?, username = ?, email = ?, role = ?, profile_image = ? WHERE id = ?',
+        [ime, prezime, username, email, role, profile_image || null, id], // Allow profile_image to be NULL
+        function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            res.json({ message: 'Podaci korisnika ažurirani!' });
+        }
+    );
+});
+
+// 📌 Brisanje korisnika (DELETE)
+app.delete("/users/:id", checkAdmin, (req, res) => {
+    const { id } = req.params;
+    console.log(`Brisanje korisnika sa ID: ${id}`);  // Debugging
+    db.run("DELETE FROM users WHERE id = ?", id, function (err) {
+        if (err) {
+            console.error("Greška pri brisanju korisnika:", err);
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: "Korisnik nije pronađen" });
+        }
+        res.json({ message: "Korisnik obrisan!" });
+    });
+});
+
+
+// Ažurirajte korisnika s putanjom do slike
+app.put('/users/:id/profile-image', (req, res) => {
+    const { id } = req.params;
+    const { imagePath } = req.body;
+
+    db.run(
+        'UPDATE users SET profile_image = ? WHERE id = ?',
+        [imagePath, id],
+        function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            res.json({ message: 'Profilna slika ažurirana!' });
+        }
+    );
+});
+
+
+// 📌 Dohvati korisnički profil SA RBAC-om
+app.get("/users/profile", checkPermission('profile.read'), (req, res) => {  // 👈 DODAJ checkPermission
+    const token = req.headers["authorization"];
+    if (!token) return res.status(401).json({ error: "Pristup odbijen!" });
+
+    jwt.verify(token.split(" ")[1], SECRET_KEY, (err, decoded) => {
+        if (err) return res.status(403).json({ error: "Neispravan token!" });
+
+        // Provjeri da li su ime i prezime u bazi
+        db.get("SELECT id, username, ime, prezime, role, profile_image FROM users WHERE id = ?", [decoded.id], (err, row) => {
+            if (err) {
+                return res.status(500).json({ error: "Greška pri dohvaćanju podataka!" });
+            }
+
+            if (row) {
+                console.log('✅ Dohvaćeni podaci s backend-a za korisnika:', decoded.username);
+                res.json({
+                    id: row.id,
+                    username: row.username,
+                    ime: row.ime,
+                    prezime: row.prezime,
+                    role: row.role,  // 👈 OVO JE KLJUČNO - mora vraćati role!
+                    profile_image: row.profile_image,
+                });
+            } else {
+                res.status(404).json({ error: "Korisnik nije pronađen!" });
+            }
+        });
+    });
+});
+
+
+// 📌 Dohvati korisnički profil
+app.get("/users/profile", (req, res) => {
+    const token = req.headers["authorization"];
+    if (!token) return res.status(401).json({ error: "Pristup odbijen!" });
+
+    jwt.verify(token.split(" ")[1], SECRET_KEY, (err, decoded) => {
+        if (err) return res.status(403).json({ error: "Neispravan token!" });
+
+        // Provjeri da li su ime i prezime u bazi
+        db.get("SELECT username, ime, prezime, profile_image FROM users WHERE id = ?", [decoded.id], (err, row) => {
+            if (err) {
+                return res.status(500).json({ error: "Greška pri dohvaćanju podataka!" });
+            }
+
+            if (row) {
+                // Provjeri jesu li ime i prezime u bazi
+                console.log('Dohvaćeni podaci s backend-a:', row);
+                res.json({
+                    username: row.username,
+                    ime: row.ime,          // Provjeri da li su ime i prezime prisutni u bazi
+                    prezime: row.prezime,
+                    profile_image: row.profile_image,
+                });
+            } else {
+                res.status(404).json({ error: "Korisnik nije pronađen!" });
+            }
+        });
+    });
+});
+
+
+// 11.11.2025.
+
+// 📌 API ruta za dohvaćanje ukupnog prihoda po godinama
+app.get("/api/revenue-by-year", (req, res) => {
+    const { year } = req.query;
+
+    let query = `SELECT SUM(revenue) AS totalIncome FROM reports`;  // Početni upit
+    let params = [];
+
+    if (year && year !== "Sve") {  // Ako nije "all", filtriramo po godini
+        query += ` WHERE year = ?`;
+        params.push(year);
+    } else if (year === "Sve") { // Ako je "all", ne filtriramo po godini
+        query = `SELECT SUM(revenue) AS totalIncome FROM reports`;  // Upit za sve godine
+    }
+
+    db.get(query, params, (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ totalIncome: row.totalIncome || 0 });  // Vraćamo totalIncome
+    });
+});
+
+
+
+// API ruta za dohvaćanje zadnje godine
+app.get("/api/latest-year", (req, res) => {
+    db.get("SELECT MAX(year) AS latestYear FROM reports", [], (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ latestYear: row.latestYear });
+    });
+});
+// 📌 API ruta za dohvaćanje dostupnih godina
+app.get("/api/years", (req, res) => {
+    db.all("SELECT DISTINCT year FROM reports ORDER BY year ASC", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows.map(row => row.year));  // Vraćamo samo godine iz baze
+    });
+});
+
+// 14.11.2025
+
+// 📌 API ruta za dohvaćanje CAPEX po godinama
+app.get("/api/capex-by-year", (req, res) => {
+    const { year } = req.query;
+
+    let query = `SELECT SUM(amount_invested) AS totalCapex FROM refinery_capex`;
+    let params = [];
+
+    if (year && year !== "Sve") {
+        query += ` WHERE year = ?`;
+        params.push(year);
+    } else if (year === "Sve") {
+        query = `SELECT SUM(amount_invested) AS totalCapex FROM refinery_capex`;
+    }
+
+    db.get(query, params, (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ totalCapex: row.totalCapex || 0 });
+    });
+});
+
+// 16.11.2025.
+
+// Ruta za dohvat broja zaposlenih
+app.get('/api/total-employees', (req, res) => {
+    const query = `SELECT COUNT(*) AS totalEmployees FROM users`; // Broji sve korisnike u tablici users
+    db.get(query, (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ totalEmployees: row.totalEmployees }); // Vraća broj zaposlenih
+    });
+});
+
+
+// 19.11.2025. DOADATAK BENZISKIH PUMPI
+
+// server.js - ISPRAVNE RUTE ZA GAS STATIONS
+// 📌 GET - Dohvati sve benzinske stanice
+app.get("/api/gas-stations", checkPermission('gas-stations.read'), (req, res) => {
+    console.log('✅ Pozivam /api/gas-stations...');
+
+    const query = 'SELECT * FROM gas_stations ORDER BY id DESC';
+
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            console.error('❌ SQL greška:', err);
+            return res.status(500).json({ error: err.message });
+        }
+
+        console.log(`✅ Pronađeno stanica: ${rows.length}`);
+
+        // NEMA POTREBE ZA TRANSFORMACIJOM - već koristimo pravi naziv
+        res.json(rows);
+    });
+});
+
+// 📌 POST - Dodaj novu benzinsku stanicu
+app.post('/api/gas-stations', checkPermission('gas-stations.create'), (req, res) => {
+    console.log('📝 Dodajem novu stanicu:', req.body);
+
+    const { name, location, country, type, status, has_fresh_corner, latitude, longitude } = req.body;
+
+    // KORISTI PRAVI NAZIV STUPCA - has_fresh_corner
+    const query = `
+        INSERT INTO gas_stations
+        (name, location, country, type, status, has_fresh_corner, latitude, longitude)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const params = [name, location, country, type, status, has_fresh_corner ? 1 : 0, latitude, longitude];
+
+    db.run(query, params, function(err) {
+        if (err) {
+            console.error('❌ SQL greška pri insert:', err);
+            return res.status(500).json({ error: err.message });
+        }
+
+        console.log('✅ Stanica dodana, ID:', this.lastID);
+        res.json({ id: this.lastID, success: true });
+    });
+});
+
+// 📌 PUT - Ažuriraj postojeću stanicu
+app.put('/api/gas-stations/:id',  checkPermission('gas-stations.update'),(req, res) => {
+    const { id } = req.params;
+    const { name, location, country, type, status, has_fresh_corner, latitude, longitude } = req.body;
+
+    console.log(`✏️ Ažuriram stanicu ID: ${id}`, req.body);
+
+    // KORISTI PRAVI NAZIV STUPCA - has_fresh_corner
+    const query = `
+        UPDATE gas_stations SET
+                                name = ?, location = ?, country = ?, type = ?, status = ?,
+                                has_fresh_corner = ?, latitude = ?, longitude = ?
+        WHERE id = ?
+    `;
+
+    const params = [name, location, country, type, status, has_fresh_corner ? 1 : 0, latitude, longitude, id];
+
+    db.run(query, params, function(err) {
+        if (err) {
+            console.error('❌ SQL greška pri update:', err);
+            return res.status(500).json({ error: err.message });
+        }
+
+        console.log('✅ Stanica ažurirana');
+        res.json({ success: true });
+    });
+});
+
+// 📌 DELETE - Obriši stanicu
+app.delete('/api/gas-stations/:id', checkPermission('gas-stations.delete'), (req, res) => {
+    const { id } = req.params;
+    console.log(`🗑️ Brišem stanicu ID: ${id}`);
+
+    const query = 'DELETE FROM gas_stations WHERE id = ?';
+
+    db.run(query, [id], function(err) {
+        if (err) {
+            console.error('❌ SQL greška pri delete:', err);
+            return res.status(500).json({ error: err.message });
+        }
+
+        console.log('✅ Stanica obrisana');
+        res.json({ success: true });
+    });
+});
+
+// 📌 DEBUG - Provjera strukture tablice
+app.get('/api/debug-table-structure',  checkPermission('gas-stations.*'),(req, res) => {
+    const query = "PRAGMA table_info(gas_stations)";
+
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        console.log('📋 Struktura tablice gas_stations:');
+        rows.forEach(col => {
+            console.log(`   ${col.name} (${col.type})`);
+        });
+
+        res.json({ structure: rows });
+    });
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 20.11.2025.
+// 📌 SIGURNOSNI MIDDLEWARE I FUNKCIJE
+// Konfiguracija sigurnosnih postavki - SUPER BRZO TESTIRANJE (30 SEKUNDI)
+const SECURITY_CONFIG = {
+    MAX_LOGIN_ATTEMPTS: 3,
+    LOCKOUT_DURATION: 30 * 1000, // 30 SEKUNDI
+    IP_BLOCK_DURATION: 30 * 1000, // 30 SEKUNDI
+    FAILED_LOGIN_WINDOW: 30 * 1000 // 30 SEKUNDI
+};
+
+// 📌 Funkcija za logovanje sigurnosnih događaja
+function logSecurityEvent(ip, username, actionType, description, userAgent = null, severity = 'medium') {
+    const query = `
+        INSERT INTO security_logs (ip_address, username, action_type, description, user_agent, severity)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `;
+
+    db.run(query, [ip, username, actionType, description, userAgent, severity], (err) => {
+        if (err) {
+            console.error('Greška pri logovanju sigurnosnog događaja:', err);
+        }
+    });
+}
+
+
+// Provjera da li je IP blokiran - ISPRAVLJENA VERZIJA
+function isIpBlocked(ip, callback) {
+    const query = `
+        SELECT * FROM blocked_ips
+        WHERE ip_address = ? AND (is_permanent = 1 OR datetime(blocked_until) > datetime('now'))
+    `;
+
+    db.get(query, [ip], (err, row) => {
+        if (err) {
+            console.error('Greška pri provjeri IP blokade:', err);
+            return callback(false);
+        }
+
+        if (row) {
+            console.log(`🚫🚫🚫 IP ${ip} JE BLOKIRAN do: ${row.blocked_until}`);
+            console.log(`⏰ Trenutno vrijeme baze: ${new Date().toISOString()}`);
+            console.log(`📋 Razlog: ${row.reason}`);
+        } else {
+            console.log(`✅ IP ${ip} NIJE blokiran`);
+        }
+
+        callback(!!row);
+    });
+}
+
+
+// Provjera da li je korisnik zaključan - ISPRAVLJENA VERZIJA
+function isUserLocked(username, callback) {
+    const query = `
+        SELECT * FROM user_lockouts
+        WHERE username = ? AND datetime(locked_until) > datetime('now')
+    `;
+
+    db.get(query, [username], (err, row) => {
+        if (err) {
+            console.error('Greška pri provjeri lockout-a:', err);
+            return callback(false);
+        }
+
+        if (row) {
+            console.log(`🔐 User ${username} je ZAKLJUČAN do: ${row.locked_until}`);
+            console.log(`⏰ Trenutno vrijeme (UTC): ${new Date().toISOString()}`);
+        }
+
+        callback(!!row);
+    });
+}
+
+// Detekcija SQL injection napada
+function detectSqlInjection(input) {
+    if (typeof input !== 'string') return false;
+
+    const sqlInjectionPatterns = [
+        /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|EXEC|ALTER|CREATE|TRUNCATE)\b)/i,
+        /(\b(OR|AND)\b\s*\d+\s*=\s*\d+)/i,
+        /('|"|;|--|\/\*|\*\/|@@|char|nchar|varchar|nvarchar)/i,
+        /(\b(WAITFOR|DELAY)\b\s*'\d+:\d+:\d+')/i,
+        /(\b(SLEEP|BENCHMARK)\b\s*\(\d+\))/i,
+        /(;\s*(DROP|DELETE|UPDATE|INSERT))/i,
+        /(\bUNION\b.*\bSELECT\b)/i
+    ];
+
+    return sqlInjectionPatterns.some(pattern => pattern.test(input));
+}
+
+// Snimi failed login pokušaj
+function recordFailedLogin(ip, username, userAgent) {
+    const query = `
+        INSERT INTO failed_logins (ip_address, username, user_agent)
+        VALUES (?, ?, ?)
+    `;
+
+    db.run(query, [ip, username, userAgent], (err) => {
+        if (err) {
+            console.error('Greška pri snimanju failed login-a:', err);
+            return;
+        }
+
+        // Provjeri da li treba blokirati IP ili korisnika
+        checkAndBlockIfNeeded(ip, username);
+    });
+}
+
+
+//  Provjeri i blokiraj ako je potrebno - ISPRAVLJENA VERZIJA
+function checkAndBlockIfNeeded(ip, username) {
+    const timeWindow = new Date(Date.now() - SECURITY_CONFIG.FAILED_LOGIN_WINDOW);
+
+    console.log(`🔍 Checking security for IP: ${ip}, User: ${username}`);
+
+    // Provjeri IP-based brute force
+    const ipQuery = `
+        SELECT COUNT(*) as attempt_count
+        FROM failed_logins
+        WHERE ip_address = ? AND attempted_at > datetime(?)
+    `;
+
+    db.get(ipQuery, [ip, timeWindow.toISOString()], (err, ipResult) => {
+        if (err) {
+            console.error('Greška pri provjeri IP pokušaja:', err);
+            return;
+        }
+
+        console.log(`📊 IP ${ip} ima ${ipResult.attempt_count} pokušaja u zadnjih ${SECURITY_CONFIG.FAILED_LOGIN_WINDOW/60000} minuta`);
+
+        if (ipResult.attempt_count >= SECURITY_CONFIG.MAX_LOGIN_ATTEMPTS) {
+            console.log(`🚨 BLOKIRAM IP ${ip} zbog brute force napada!`);
+            blockIp(ip, 'Brute force attack detected', 'system');
+            logSecurityEvent(ip, null, 'brute_force_detected',
+                `IP automatski blokiran zbog ${ipResult.attempt_count} neuspješnih login pokušaja`,
+                null, 'high');
+        }
+    });
+
+    // Provjeri user-based brute force
+    if (username) {
+        const userQuery = `
+            SELECT COUNT(*) as attempt_count
+            FROM failed_logins
+            WHERE username = ? AND attempted_at > datetime(?)
+        `;
+
+        db.get(userQuery, [username, timeWindow.toISOString()], (err, userResult) => {
+            if (err) {
+                console.error('Greška pri provjeri user pokušaja:', err);
+                return;
+            }
+
+            console.log(`📊 User ${username} ima ${userResult.attempt_count} pokušaja u zadnjih ${SECURITY_CONFIG.FAILED_LOGIN_WINDOW/60000} minuta`);
+
+            if (userResult.attempt_count >= SECURITY_CONFIG.MAX_LOGIN_ATTEMPTS) {
+                console.log(`🔐 ZAKLJUČAVAM user ${username} zbog previše pokušaja!`);
+                lockoutUser(username, 'Too many failed login attempts');
+                logSecurityEvent(ip, username, 'user_lockout',
+                    `Korisnik automatski zaključan zbog ${userResult.attempt_count} neuspješnih login pokušaja`,
+                    null, 'high');
+            }
+        });
+    }
+}
+
+// Blokiraj IP adresu
+function blockIp(ip, reason, blockedBy = 'system', duration = SECURITY_CONFIG.IP_BLOCK_DURATION) {
+    const blockedUntil = new Date(Date.now() + duration);
+
+    const query = `
+        INSERT OR REPLACE INTO blocked_ips (ip_address, blocked_until, reason, blocked_by, is_permanent)
+        VALUES (?, ?, ?, ?, ?)
+    `;
+
+    db.run(query, [ip, blockedUntil.toISOString(), reason, blockedBy, 0], (err) => {
+        if (err) {
+            console.error('Greška pri blokiranju IP:', err);
+        }
+    });
+}
+
+// Zaključaj korisnika
+function lockoutUser(username, reason, duration = SECURITY_CONFIG.LOCKOUT_DURATION) {
+    const lockedUntil = new Date(Date.now() + duration);
+
+    const query = `
+        INSERT OR REPLACE INTO user_lockouts (username, locked_until, reason, failed_attempts)
+        VALUES (?, ?, ?, ?)
+    `;
+
+    db.run(query, [username, lockedUntil.toISOString(), reason, SECURITY_CONFIG.MAX_LOGIN_ATTEMPTS], (err) => {
+        if (err) {
+            console.error('Greška pri lockout-u korisnika:', err);
+        }
+    });
+}
+
+//  Dobavi IP adresu iz requesta
+function getClientIp(req) {
+    return req.ip ||
+        req.connection.remoteAddress ||
+        req.socket.remoteAddress ||
+        (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
+        '127.0.0.1';
+}
+
+// MIDDLEWARE ZA SIGURNOSNU PROVJERU
+const securityMiddleware = (req, res, next) => {
+    console.log("securityMiddleware - URL:", req.url);
+    console.log("securityMiddleware - Headers:", req.headers);
+
+    const clientIp = getClientIp(req);
+    const userAgent = req.get('User-Agent');
+
+    // Provjeri SQL injection u body i query parametrima
+    const checkForSqlInjection = (obj) => {
+        for (let key in obj) {
+            if (typeof obj[key] === 'string' && detectSqlInjection(obj[key])) {
+                logSecurityEvent(clientIp, null, 'sql_injection_attempt',
+                    `SQL injection detected in ${key}: ${obj[key].substring(0, 100)}`,
+                    userAgent, 'critical');
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (checkForSqlInjection(req.body) || checkForSqlInjection(req.query)) {
+        return res.status(403).json({
+            error: "Sigurnosna provjera neuspješna! Sumljiva aktivnost detektovana."
+        });
+    }
+
+    // Provjeri da li je IP blokiran
+    isIpBlocked(clientIp, (blocked) => {
+        if (blocked) {
+            logSecurityEvent(clientIp, null, 'blocked_ip_access',
+                'Blocked IP attempted to access the system', userAgent, 'high');
+            return res.status(403).json({
+                error: "Vaša IP adresa je privremeno blokirana zbog sigurnosnih razloga."
+            });
+        }
+        next();
+    });
+};
+
+// Primijeni sigurnosni middleware na sve rute
+app.use(securityMiddleware);
+
+
+//  POBOLJŠANA LOGIN RUTA SA ROLE DEBUG-OM
+app.post("/login", async (req, res) => {
+    const { username, password } = req.body;
+    const clientIp = getClientIp(req);
+    const userAgent = req.get('User-Agent');
+
+    console.log(`\nNOVI LOGIN POKUŠAJ: ${username} from IP: ${clientIp}`);
+
+    //  PRVO PROVJERI BLOKADU - SINHRONO!
+    const ipBlocked = await new Promise((resolve) => {
+        isIpBlocked(clientIp, resolve);
+    });
+
+    if (ipBlocked) {
+        console.log(`❌❌❌ BLOKIRAN PRISTUP: IP ${clientIp} je blokiran!`);
+        logSecurityEvent(clientIp, username, 'login_attempt_blocked',
+            `Blocked IP attempted login - Username: ${username}`, userAgent, 'high');
+        return res.status(403).json({
+            error: "🚫 Vaša IP adresa je privremeno blokirana zbog sigurnosnih razloga. Pokušajte ponovo za 1 minut."
+        });
+    }
+
+    // 👇 PROVJERA SQL INJECTION
+    const hasSqlInjection = detectSqlInjection(username) || detectSqlInjection(password);
+
+    if (hasSqlInjection) {
+        console.log(`CRITICAL SQL INJECTION DETECTED FROM IP: ${clientIp}`);
+        console.log(`sername attempt: "${username}"`);
+        console.log(`Password attempt: "${password}"`);
+
+        // 👇 AGRESIVNO BLOKIRANJE - 1 MINUTA
+        blockIp(clientIp, 'SQL injection attack', 'system', 60 * 1000);
+
+        logSecurityEvent(clientIp, username, 'sql_injection_attempt',
+            `SQL INJECTION - BLOCKED IP - Username: "${username}"`,
+            userAgent, 'critical');
+
+        return res.status(403).json({
+            error: "Sigurnosna provjera neuspješna! Detektovan je pokušaj SQL injection napada. Vaša IP adresa je blokirana 1 minut."
+        });
+    }
+
+
+    isUserLocked(username, (userLocked) => {
+        if (userLocked) {
+            logSecurityEvent(clientIp, username, 'login_attempt_locked',
+                'Attempted login to locked account', userAgent, 'medium');
+            return res.status(423).json({
+                error: "Račun je privremeno zaključan. Pokušajte ponovo za 1 minut."
+            });
+        }
+
+        db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+            if (err || !user) {
+                recordFailedLogin(clientIp, username, userAgent);
+                logSecurityEvent(clientIp, username, 'login_failed',
+                    'Attempted login with non-existent username', userAgent, 'medium');
+                return res.status(400).json({ error: "Pogrešno korisničko ime ili lozinka!" });
+            }
+
+            if (!bcrypt.compareSync(password, user.password)) {
+                recordFailedLogin(clientIp, username, userAgent);
+                logSecurityEvent(clientIp, username, 'login_failed',
+                    'Failed login attempt - incorrect password', userAgent, 'medium');
+                return res.status(401).json({ error: "Pogrešno korisničko ime ili lozinka!" });
+            }
+
+            // USPJEŠNA PRIJAVA
+            console.log(`✅✅✅ USPJEŠAN LOGIN: ${username}`);
+            console.log(`👤 Podaci korisnika iz baze:`, {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+                ime: user.ime,
+                prezime: user.prezime
+            });
+
+            // Provjeri da li role postoji u RBAC_CONFIG
+            if (user.role && RBAC_CONFIG.roles[user.role]) {
+                console.log(`ROLE PRONAĐENA U RBAC: ${user.role}`);
+                console.log(`Dozvole za ${user.role}:`, RBAC_CONFIG.roles[user.role]);
+            } else {
+                console.log(`UPOZORENJE: Role "${user.role}" nije pronađena u RBAC_CONFIG!`);
+            }
+
+            const token = jwt.sign(
+                { id: user.id, username: user.username, role: user.role },
+                SECRET_KEY,
+                { expiresIn: "1h" }
+            );
+
+            console.log(`TOKEN KREIRAN za ${user.role}:`, token.substring(0, 50) + "...");
+
+            logSecurityEvent(clientIp, username, 'login_success',
+                'User successfully logged in', userAgent, 'low');
+
+            res.json({
+                token,
+                role: user.role,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    ime: user.ime,
+                    prezime: user.prezime
+                }
+            });
+        });
+    });
+});
+
+// Dohvati sigurnosne logove
+app.get("/api/security/logs", checkPermission('security.logs.read'), (req, res) => {
+    const { page = 1, limit = 50, severity, action_type } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `SELECT * FROM security_logs WHERE 1=1`;
+    let params = [];
+
+    if (severity) {
+        query += ` AND severity = ?`;
+        params.push(severity);
+    }
+
+    if (action_type) {
+        query += ` AND action_type = ?`;
+        params.push(action_type);
+    }
+
+    query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+    params.push(parseInt(limit), offset);
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Dohvati blokirane IP adrese
+app.get("/api/security/blocked-ips", checkPermission('security.ips.read'), (req, res) => {
+    db.all(`SELECT * FROM blocked_ips ORDER BY blocked_at DESC`, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Dohvati lockout-e korisnika
+app.get("/api/security/user-lockouts", checkPermission('security.users.read'), (req, res) => {
+    db.all(`SELECT * FROM user_lockouts ORDER BY locked_at DESC`, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Blokiraj IP adresu (manualno)
+app.post("/api/security/block-ip", checkPermission('security.ips.manage'), (req, res) => {
+    const { ip_address, reason, duration_hours = 24, is_permanent = false } = req.body;
+
+    let blockedUntil = null;
+    if (!is_permanent) {
+        blockedUntil = new Date(Date.now() + (duration_hours * 60 * 60 * 1000));
+    }
+
+    const query = `
+        INSERT OR REPLACE INTO blocked_ips (ip_address, blocked_until, reason, blocked_by, is_permanent)
+        VALUES (?, ?, ?, ?, ?)
+    `;
+
+    db.run(query, [ip_address, blockedUntil?.toISOString(), reason, req.user.username, is_permanent ? 1 : 0], function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        logSecurityEvent(getClientIp(req), req.user.username, 'ip_manual_block',
+            `Manually blocked IP: ${ip_address} - Reason: ${reason}`, null, 'high');
+
+        res.json({ message: "IP adresa uspješno blokirana!" });
+    });
+});
+
+// Deblokiraj IP adresu
+app.delete("/api/security/unblock-ip/:ip", checkPermission('security.ips.manage'), (req, res) => {
+    const { ip } = req.params;
+
+    db.run("DELETE FROM blocked_ips WHERE ip_address = ?", [ip], function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        logSecurityEvent(getClientIp(req), req.user.username, 'ip_manual_unblock',
+            `Manually unblocked IP: ${ip}`, null, 'medium');
+
+        res.json({ message: "IP adresa uspješno deblokirana!" });
+    });
+});
+
+// Otključaj korisnika
+app.delete("/api/security/unlock-user/:username", checkPermission('security.users.manage'), (req, res) => {
+    const { username } = req.params;
+
+    db.run("DELETE FROM user_lockouts WHERE username = ?", [username], function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        logSecurityEvent(getClientIp(req), req.user.username, 'user_manual_unlock',
+            `Manually unlocked user: ${username}`, null, 'medium');
+
+        res.json({ message: "Korisnik uspješno otključan!" });
+    });
+});
+
+// Statistike za dashboard
+app.get("/api/security/stats", checkPermission('security.stats.read'), (req, res) => {
+    const queries = {
+        totalLogs: `SELECT COUNT(*) as count FROM security_logs`,
+        todayLogs: `SELECT COUNT(*) as count FROM security_logs WHERE DATE(timestamp) = DATE('now')`,
+        blockedIps: `SELECT COUNT(*) as count FROM blocked_ips WHERE is_permanent = 1 OR blocked_until > datetime('now')`,
+        lockedUsers: `SELECT COUNT(*) as count FROM user_lockouts WHERE locked_until > datetime('now')`,
+        highSeverity: `SELECT COUNT(*) as count FROM security_logs WHERE severity IN ('high', 'critical') AND DATE(timestamp) = DATE('now')`
+    };
+
+    const results = {};
+    let completed = 0;
+
+    for (const [key, query] of Object.entries(queries)) {
+        db.get(query, [], (err, row) => {
+            if (!err) {
+                results[key] = row.count;
+            }
+            completed++;
+
+            if (completed === Object.keys(queries).length) {
+                res.json(results);
+            }
+        });
+    }
+});
+
+// Aktivnosti po satu (za graf)
+app.get("/api/security/activity-by-hour", checkPermission('security.stats.read'), (req, res) => {
+    const query = `
+        SELECT
+            strftime('%H', timestamp) as hour,
+            COUNT(*) as count
+        FROM security_logs
+        WHERE DATE(timestamp) = DATE('now')
+        GROUP BY strftime('%H', timestamp)
+        ORDER BY hour
+    `;
+
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+
+
+
+// test
+
+
+// Resetiraj sve blokade (samo za development)
+app.post("/api/security/reset-blocks", checkPermission('security.debug'),  (req, res) => {
+    db.run("DELETE FROM blocked_ips", (err) => {
+        if (err) console.error(err);
+    });
+    db.run("DELETE FROM user_lockouts", (err) => {
+        if (err) console.error(err);
+    });
+    db.run("DELETE FROM failed_logins", (err) => {
+        if (err) console.error(err);
+    });
+
+    console.log("🔄 Svi blokovi resetovani za testiranje");
+    res.json({ message: "Svi sigurnosni blokovi resetovani!" });
+});
+
+// Prikaži trenutne failed logine
+app.get("/api/security/debug-failed-logins", checkPermission('security.debug'), (req, res) => {
+    db.all("SELECT * FROM failed_logins ORDER BY attempted_at DESC", [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Prikaži trenutne blokade
+app.get("/api/security/debug-blocks", checkPermission('security.debug'),(req, res) => {
+    db.all(`
+        SELECT 'ip' as type, ip_address as identifier, blocked_until, reason FROM blocked_ips
+        UNION ALL
+        SELECT 'user' as type, username as identifier, locked_until as blocked_until, reason FROM user_lockouts
+        ORDER BY blocked_until DESC
+    `, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+
+
+
+
+// 22.11.2025.
+// MIJENJAM ANALIZA POTROŠNJE GORIVA U PROFITABILNOST PO GORIVIMA
+app.get("/api/fuel-profitability", (req, res) => {
+    db.all(`
+        SELECT
+            fuel_type,
+            SUM(sold_quantity) as total_sold,
+            SUM(revenue) as total_revenue,
+            AVG(revenue / sold_quantity) as revenue_per_ton
+        FROM reports
+        WHERE sold_quantity > 0 AND revenue > 0
+        GROUP BY fuel_type
+        ORDER BY total_revenue DESC
+    `, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        res.json(rows);
+    });
+});
+
+
+// 4.12.2025.
+
+// RUTA ZA DOHVAĆANJE ZADNJEG LOGINA
+app.get("/api/security/last-login", (req, res) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+
+    if (!token) return res.status(401).json({ error: "No token" });
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        db.get(
+            `SELECT timestamp 
+             FROM security_logs 
+             WHERE username = ? AND action_type = 'login_success' 
+             ORDER BY timestamp DESC LIMIT 1`,
+            [decoded.username],
+            (err, row) => {
+                if (err) {
+                    console.error("Greška pri dohvaćanju posljednje prijave:", err);
+                    return res.status(500).json({ error: "Database error" });
+                }
+
+                res.json({ lastLogin: row?.timestamp || null });
+            }
+        );
+    } catch {
+        res.status(401).json({ error: "Invalid token" });
+    }
+});
+
+// AŽURIRANA RUTA ZA DOHVAĆANJE ZADATAKA
+// U /api/tasks/my-tasks endpointu
+app.get("/api/tasks/my-tasks", checkPermission('tasks.read'), authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log(`📋 Fetching tasks for user ${req.user.username} (ID: ${userId}, Role: ${userRole})`);
+
+    // ISPRAVLJEN UPIT - koristi is_public za "za sve" zadatke
+    db.all(
+        `SELECT t.*,
+                u.username as assigned_to_name,
+                u2.username as assigned_by_name
+         FROM daily_tasks t
+                  LEFT JOIN users u ON t.assigned_to_user_id = u.id
+                  LEFT JOIN users u2 ON t.assigned_by_user_id = u2.id
+         WHERE t.status IN ('pending', 'in_progress')
+           AND (
+             -- 1. Admin vidi sve zadatke
+             ? = 'admin'
+
+                 -- 2. Zadaci dodijeljeni ovom korisniku (po user ID)
+                 OR t.assigned_to_user_id = ?
+
+                 -- 3. Zadaci dodijeljeni ovoj ulozi
+                 OR t.assigned_to_role = ?
+
+                 -- 4. ZADACI ZA SVE 
+                 -- a) Koristim is_public kolonu
+                 OR t.is_public = 1
+
+                 -- b) ILI ako su oba polja NULL (za backward compatibility)
+                 OR (t.assigned_to_user_id IS NULL AND t.assigned_to_role IS NULL)
+
+                 -- 5. Zadaci koje je korisnik kreirao
+                 OR t.assigned_by_user_id = ?
+             )
+         ORDER BY
+             CASE t.priority
+                 WHEN 'critical' THEN 1
+                 WHEN 'high' THEN 2
+                 WHEN 'medium' THEN 3
+                 WHEN 'low' THEN 4
+                 END,
+             t.due_date ASC`,
+        [userRole, userId, userRole, userId],
+        (err, rows) => {
+            if (err) {
+                console.error("Greška pri dohvaćanju zadataka:", err);
+                return res.status(500).json({ error: "Database error" });
+            }
+
+            console.log(`Vraćeno ${rows.length} zadataka za korisnika ${req.user.username}`);
+
+            // Debug info - provjerite šta se vraća
+            rows.forEach((task, index) => {
+                let reason = '';
+                if (userRole === 'admin') reason = 'I am admin';
+                else if (task.assigned_to_user_id === userId) reason = 'Assigned to me';
+                else if (task.assigned_to_role === userRole) reason = 'Assigned to my role';
+                else if (task.is_public === 1) reason = 'Public task (is_public = 1)';
+                else if (!task.assigned_to_user_id && !task.assigned_to_role) reason = 'Public task (NULL values)';
+                else if (task.assigned_by_user_id === userId) reason = 'Created by me';
+                else reason = 'UNKNOWN REASON';
+
+                console.log(`   ${index + 1}. "${task.title}" - ${reason}`);
+                console.log(`      assigned_to_user_id: ${task.assigned_to_user_id}, assigned_to_role: ${task.assigned_to_role}, is_public: ${task.is_public}`);
+            });
+
+            res.json(rows);
+        }
+    );
+});
+
+// DEBUG RUTA - provjeri zadatke
+app.get("/api/debug/tasks", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    const query = `
+        SELECT 
+            id,
+            title,
+            assigned_to_user_id,
+            assigned_to_role,
+            assigned_by_user_id,
+            CASE 
+                WHEN assigned_to_user_id IS NULL AND assigned_to_role IS NULL THEN 'PUBLIC'
+                WHEN assigned_to_user_id IS NOT NULL THEN 'USER'
+                WHEN assigned_to_role IS NOT NULL THEN 'ROLE'
+            END as assignment_type
+        FROM daily_tasks 
+        WHERE status IN ('pending', 'in_progress')
+    `;
+
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        res.json({
+            userId,
+            userRole,
+            allTasks: rows,
+            publicTasks: rows.filter(t => !t.assigned_to_user_id && !t.assigned_to_role),
+            myTasks: rows.filter(t =>
+                t.assigned_to_user_id === userId ||
+                t.assigned_to_role === userRole ||
+                (!t.assigned_to_user_id && !t.assigned_to_role)
+            )
+        });
+    });
+});
+
+
+app.post("/api/tasks", checkPermission('tasks.create'), (req, res) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+
+    if (!token) return res.status(401).json({ error: "No token" });
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        const {
+            title,
+            description,
+            assigned_to_user_id,
+            assigned_to_role,
+            priority,
+            due_date,
+            category
+        } = req.body;
+
+        console.log(`\n📝 ===== CREATING NEW TASK =====`);
+        console.log(`👤 Created by: ${decoded.username} (ID: ${decoded.id}, Role: ${decoded.role})`);
+        console.log(`📋 Task data:`, req.body);
+
+        // Konverzija i validacija
+        let assignedUserId = assigned_to_user_id ? parseInt(assigned_to_user_id) : null;
+        let assignedRole = assigned_to_role || null;
+
+        // Kreiranje zadatka u bazi
+        db.run(
+            `INSERT INTO daily_tasks 
+             (title, description, assigned_to_user_id, assigned_to_role, 
+              assigned_by_user_id, priority, due_date, category, status, created_at, is_public)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, ?)`,
+            [
+                title,
+                description,
+                assignedUserId,
+                assignedRole,
+                decoded.id,
+                priority || 'medium',
+                due_date || null,
+                category || 'general',
+                (!assignedUserId && !assignedRole) ? 1 : 0 // is_public
+            ],
+            function(err) {
+                if (err) {
+                    console.error("Greška pri kreiranju zadatka:", err);
+                    return res.status(500).json({ error: "Database error" });
+                }
+
+                const taskId = this.lastID;
+                console.log(`✅ Task created with ID: ${taskId}`);
+
+                // Dohvati podatke o adminu
+                db.get(
+                    "SELECT ime, prezime FROM users WHERE id = ?",
+                    [decoded.id],
+                    (err, adminUser) => {
+                        const assignedByName = adminUser ?
+                            `${adminUser.ime} ${adminUser.prezime}` : 'Administrator';
+
+                        // POŠALJI NOTIFIKACIJU PREKO WEBSOCKETA
+                        const notificationData = {
+                            taskId: taskId,
+                            title: title,
+                            description: description,
+                            assigned_to_user_id: assignedUserId,
+                            assigned_to_role: assignedRole,
+                            assignedByName: assignedByName,
+                            createdBy: decoded.username,
+                            createdBySocketId: req.headers['socket-id'] // Dodajte socket-id u frontend request
+                        };
+
+                        console.log('🔔 Emitting task_created event:', notificationData);
+                        io.emit("task_created", notificationData);
+
+                        res.json({
+                            id: taskId,
+                            success: true,
+                            message: "Zadatak uspješno kreiran!",
+                            assignedByName: assignedByName,
+                            notificationSent: true
+                        });
+                    }
+                );
+            }
+        );
+    } catch (error) {
+        console.error("Greška u /api/tasks:", error);
+        res.status(500).json({ error: "Server error: " + error.message });
+    }
+});
+
+// Označi zadatak kao završen
+app.put("/api/tasks/:id/complete", checkPermission('tasks.update'), (req, res) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+    const taskId = req.params.id;
+
+    if (!token) return res.status(401).json({ error: "No token" });
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        db.run(
+            `UPDATE daily_tasks 
+             SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND (assigned_to_user_id = ? OR ? = 'admin')`,
+            [taskId, decoded.id, decoded.role],
+            function(err) {
+                if (err) {
+                    console.error("Greška pri ažuriranju zadatka:", err);
+                    return res.status(500).json({ error: "Database error" });
+                }
+
+                if (this.changes === 0) {
+                    return res.status(403).json({ error: "Niste ovlašteni za ovu akciju" });
+                }
+
+                // Zabilježi aktivnost
+                db.run(
+                    `INSERT INTO task_activities (task_id, user_id, activity)
+                     VALUES (?, ?, 'completed')`,
+                    [taskId, decoded.id]
+                );
+
+                res.json({ success: true });
+            }
+        );
+    } catch {
+        res.status(401).json({ error: "Invalid token" });
+    }
+});
+
+
+//  RUTA ZA DOHVAĆANJE TRENUTNOG KORISNIKA (za Dashboard)
+app.get("/api/user/me", (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            return res.status(401).json({ error: "Niste prijavljeni!" });
+        }
+
+        const token = authHeader.split(" ")[1];
+        const decoded = jwt.verify(token, SECRET_KEY);
+
+        console.log("🔍 Decoded token za /api/user/me:", decoded);
+
+        db.get(
+            "SELECT id, username, ime, prezime, role, profile_image, email FROM users WHERE id = ?",
+            [decoded.id],
+            (err, user) => {
+                if (err) {
+                    console.error("Greška u bazi pri dohvaćanju korisnika:", err);
+                    return res.status(500).json({ error: "Greška u bazi podataka!" });
+                }
+
+                if (!user) {
+                    return res.status(404).json({ error: "Korisnik nije pronađen!" });
+                }
+
+                console.log("✅ Korisnik pronađen:", user.username, "Role:", user.role);
+                res.json(user);
+            }
+        );
+    } catch (error) {
+        console.error("Greška u /api/user/me:", error.message);
+
+        if (error.name === 'JsonWebTokenError') {
+            return res.status(401).json({ error: "Neispravan token!" });
+        }
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: "Token je istekao!" });
+        }
+
+        res.status(500).json({ error: "Interna greška servera!" });
+    }
+});
+
+
+
+//  RUTA ZA DOHVAĆANJE KORISNIKA ZA TASKS (Pojednostavljena verzija)
+app.get("/api/tasks/users", authenticateToken, (req, res) => {
+    console.log("🔐 Auth prošao, korisnik:", req.user.username);
+
+    // Provjeri permisiju
+    if (req.user.role !== 'admin') {
+        const userPerms = RBAC_CONFIG.roles[req.user.role] || [];
+        if (!userPerms.includes('tasks.create') &&
+            !userPerms.includes('*') &&
+            !userPerms.includes('tasks.*')) {
+            return res.status(403).json({ error: "Nemate dozvolu za kreiranje zadataka!" });
+        }
+    }
+
+    // Dohvati korisnike
+    db.all(
+        `SELECT id, username, ime, prezime, role, email
+         FROM users
+         WHERE status IS NULL OR status = 'active'
+         ORDER BY role, username`,
+        [],
+        (err, rows) => {
+            if (err) {
+                console.error("Greška pri dohvaćanju korisnika:", err);
+                return res.status(500).json({ error: "Database error" });
+            }
+            res.json(rows);
+        }
+    );
+});
+
+
+//  RUTA ZA KREIRANJE NOVOG ZADATKA
+app.post("/api/tasks", checkPermission('tasks.create'), (req, res) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+
+    if (!token) return res.status(401).json({ error: "No token" });
+
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        const {
+            title,
+            description,
+            assigned_to_user_id,
+            assigned_to_role,
+            priority,
+            due_date,
+            category
+        } = req.body;
+
+        // Validacija
+        if (!title || !description) {
+            return res.status(400).json({ error: "Naslov i opis su obavezni!" });
+        }
+
+        db.run(
+            `INSERT INTO daily_tasks 
+             (title, description, assigned_to_user_id, assigned_to_role, 
+              assigned_by_user_id, priority, due_date, category, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`,
+            [
+                title,
+                description,
+                assigned_to_user_id || null,
+                assigned_to_role || null,
+                decoded.id,
+                priority || 'medium',
+                due_date || null,
+                category || 'general'
+            ],
+            function(err) {
+                if (err) {
+                    console.error("Greška pri kreiranju zadatka:", err);
+                    return res.status(500).json({ error: "Database error" });
+                }
+
+                // Zabilježi aktivnost
+                db.run(
+                    `INSERT INTO task_activities (task_id, user_id, activity)
+                     VALUES (?, ?, 'assigned')`,
+                    [this.lastID, decoded.id],
+                    (err) => {
+                        if (err) console.error("Greška pri logovanju aktivnosti:", err);
+                    }
+                );
+
+                res.json({
+                    id: this.lastID,
+                    success: true,
+                    message: "Zadatak uspješno kreiran!"
+                });
+            }
+        );
+    } catch (error) {
+        console.error("Greška u /api/tasks:", error);
+        res.status(500).json({ error: "Server error" });
+    }
+});
+
+//  RUTA ZA PRETRAGU KORISNIKA ZA DODJELU ZADATAKA
+
+app.get("/api/users/search", checkPermission('users.read'), (req, res) => {
+    const { searchTerm = '' } = req.query;
+
+    let query = `
+        SELECT id, username, ime, prezime, role, email, profile_image
+        FROM users
+        WHERE (username LIKE ? OR ime LIKE ? OR prezime LIKE ? OR email LIKE ? OR role LIKE ?)
+        ORDER BY role, username
+    `;
+
+    const searchPattern = `%${searchTerm}%`;
+
+    db.all(query,
+        [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern],
+        (err, rows) => {
+            if (err) {
+                console.error("Greška pri pretrazi korisnika:", err);
+                return res.status(500).json({ error: "Database error" });
+            }
+            res.json(rows);
+        }
+    );
+});
+
+//  RUTA ZA TASK STATISTIKE
+app.get("/api/tasks/stats", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    const query = `
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END) as critical,
+            SUM(CASE WHEN priority = 'high' THEN 1 ELSE 0 END) as high
+        FROM daily_tasks
+        WHERE (
+            assigned_to_user_id = ? 
+            OR assigned_to_role = ? 
+            OR (assigned_to_user_id IS NULL AND assigned_to_role IS NULL)
+            OR ? = 'admin'
+            OR assigned_by_user_id = ?
+        )
+        AND status IN ('pending', 'in_progress')
+    `;
+
+    db.get(query, [userId, userRole, userRole, userId], (err, row) => {
+        if (err) {
+            console.error("Greška pri dohvaćanju statistike:", err);
+            return res.status(500).json({ error: "Database error" });
+        }
+        res.json(row);
+    });
+});
+
+// RUTA ZA DOHVAĆANJE JAVNIH ZADATAKA (za sve)
+app.get("/api/tasks/public", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log(`🌍 Fetching PUBLIC tasks for user ${req.user.username}`);
+
+    db.all(
+        `SELECT t.*, 
+                u.username as assigned_to_name,
+                u2.username as assigned_by_name
+         FROM daily_tasks t
+         LEFT JOIN users u ON t.assigned_to_user_id = u.id
+         LEFT JOIN users u2 ON t.assigned_by_user_id = u2.id
+         WHERE t.status IN ('pending', 'in_progress')
+           AND (
+               -- Javni zadaci: is_public = 1 ILI NULL vrijednosti
+               t.is_public = 1 
+               OR (t.assigned_to_user_id IS NULL AND t.assigned_to_role IS NULL)
+           )
+         ORDER BY 
+             CASE t.priority 
+                 WHEN 'critical' THEN 1
+                 WHEN 'high' THEN 2
+                 WHEN 'medium' THEN 3
+                 WHEN 'low' THEN 4
+             END,
+             t.due_date ASC`,
+        [],
+        (err, rows) => {
+            if (err) {
+                console.error("Greška pri dohvaćanju javnih zadataka:", err);
+                return res.status(500).json({ error: "Database error" });
+            }
+
+            console.log(`📊 Vraćeno ${rows.length} JAVNIH zadataka`);
+            res.json(rows);
+        }
+    );
+});
+
+//  Pokretanje servera sa WebSockets podrškom
+server.listen(PORT, () => {
+    console.log(`🚀 Server pokrenut na http://localhost:${PORT}`);
+});

@@ -1,0 +1,65 @@
+
+// ----------------------------------------------------
+// UI THEME AND CONFIGURATION ENDPOINTS
+// ----------------------------------------------------
+
+// Dohvati sve teme
+app.get("/api/ui/themes", authenticateToken, (req, res) => {
+    db.all("SELECT * FROM role_themes", [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Dohvati temu za specifičnu ulogu
+app.get("/api/ui/themes/:role", authenticateToken, (req, res) => {
+    const { role } = req.params;
+    db.get("SELECT * FROM role_themes WHERE role = ?", [role], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        // Vrati default ako nema
+        if (!row) {
+            return res.json({ 
+                role, 
+                primary_color: '#1976d2', 
+                secondary_color: '#42a5f5', 
+                background_color: '#f4f6f8',
+                card_style: 'glass'
+            });
+        }
+        res.json(row);
+    });
+});
+
+// Ažuriraj temu za ulogu (Samo Admin)
+app.put("/api/ui/themes/:role", authenticateToken, checkAdmin, (req, res) => {
+    const { role } = req.params;
+    const { primary_color, secondary_color, background_color, font_family, card_style } = req.body;
+
+    const query = `
+        INSERT INTO role_themes (role, primary_color, secondary_color, background_color, font_family, card_style)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(role) DO UPDATE SET
+            primary_color = excluded.primary_color,
+            secondary_color = excluded.secondary_color,
+            background_color = excluded.background_color,
+            font_family = excluded.font_family,
+            card_style = excluded.card_style
+    `;
+
+    db.run(query, [role, primary_color, secondary_color, background_color, font_family, card_style], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        
+        // Obavijesti sve klijente o promjeni teme putem socketa
+        io.to(`role_${role}`).emit('theme_updated', {
+            role, primary_color, secondary_color, background_color, card_style
+        });
+        
+        res.json({ message: "Tema uspješno ažurirana!" });
+    });
+});
