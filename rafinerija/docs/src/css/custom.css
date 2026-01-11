@@ -1,0 +1,475 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap');
+@import url("https://unpkg.com/lucide@latest/umd/lucide.css");
+
+
+/* Navbar stilizacija */
+
+.navbar::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1px; /* Debljina linije */
+  background-color: #e0e0e0; /* Siva boja */
+}
+
+/* Sakrij liniju na manjim ekranima */
+@media screen and (max-width: 768px) {
+  .navbar::after {
+    display: none;
+  }
+}
+
+
+/* Stilizacija linkova unutar navbar-a */
+.navbar a,
+.navbar .navbar__brand,
+.navbar .navbar__link {
+  font-size: 18px;
+  line-height: 23px;
+  color: #1e192d !important;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+/* Hover efekat */
+.navbar a:hover,
+.navbar .navbar__link:hover {
+  color: #673ab7 !important; /* Ljubičasta nijansa na hoveru */
+}
+
+
+/* Sidebar linkovi - primjena fonta, veličine i boje */
+.menu__list {
+  padding: 0;
+}
+
+/* Sidebar stavke - osnovni stil */
+.menu__link {
+  font-family: 'Roboto', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: #697586; /* Svjetlija siva u normalnom stanju */
+  padding: 8px 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* Raspoređuje tekst lijevo, ikonicu desno */
+  align-items: center;
+  transition: color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+
+}
+
+/* Hover efekat - tamnija boja i zaobljena pozadina */
+.menu__link:hover {
+  background-color: #f2f1f7;
+  color: #1E192D; /* Jača siva na hoveru */
+  border-radius: 6px;
+}
+/* Stilizacija aktivne stavke */
+.menu__link--active {
+  color: #673ab7;
+  font-weight: 800;
+  background-color: transparent !important;
+
+}
+.menu__link--active:hover {
+  color: #673ab7;
+  font-weight: 800;
+  background-color: #ede7f6 !important;
+
+}
+
+/* Poboljšanje ikonice - tanja verzija */
+.menu__list .menu__caret {
+  font-weight: 300; /* Manja debljina ikonice */
+  font-size: 14px;
+  opacity: 0.8;
+
+}
+
+/* Prikazivanje linije kada je podmeni otvoren */
+.menu__list .menu__list-item {
+  width: 100%;
+
+}
+
+/* Aktivna stavka podmenija dobija ljubičastu liniju */
+.menu__list .menu__list-item--active {
+  border-left-color: #673ab7;
+}
+
+/* Stilizacija za hover efekat sublist menu */
+a.menu__link.menu__link--sublist.menu__link--sublist-caret:hover {
+  background-color: #f2f1f7 !important;
+  color: #1E192D !important; /* Jača siva na hoveru */
+}
+
+/* Stilizacija za aktivne stavke */
+a.menu__link.menu__link--sublist.menu__link--sublist-caret--active {
+  background-color: #f2f1f7 !important;
+  color: #1E192D !important; /* Jača siva na hoveru */
+}
+
+
+/* Glavni sadržaj - padding sa lijeve i desne strane */
+
+/* custom.css */
+
+/* Padding se primjenjuje samo na /docs rutu */
+html.docs-wrapper #__docusaurus {
+  max-width: 84%;
+  margin: 0 auto;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+/* Ukloni padding za sve ostale rute */
+html:not(.docs-wrapper) #__docusaurus {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+
+/* Stilizacija glavnog naslova */
+h1 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 40px;
+  color: rgb(30, 25, 45); /* Tamno siva */
+}
+
+/* Stilizacija podnaslova (h2) */
+h2 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 36px;
+  color: rgb(30, 25, 45);
+}
+
+/* Stilizacija ostalih naslova (h3, h4, h5, h6) */
+h3, h4, h5, h6 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 32px;
+  color: rgb(30, 25, 45);
+}
+
+/* Stilizacija osnovnog teksta */
+body, p {
+  font-family: 'Roboto', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 26px;
+  color: #6f6a82;
+}
+
+/* Stilizacija linkova unutar teksta */
+a {
+  color: #5e35b1; /* Ljubičasta nijansa */
+  text-decoration: none;
+  transition: color 0.2s ease-in-out;
+}
+
+a:hover {
+  color: #673ab7;
+  text-decoration: underline;
+}
+
+
+/* Stilizacija linkova */
+a {
+  color: #5e35b1;
+  text-decoration: none;
+  transition: color 0.2s ease-in-out;
+}
+
+a:hover {
+  color: #673ab7;
+  text-decoration: underline;
+}
+
+/* Stilizacija Lucide ikone unutar React komponente */
+.menu__caret {
+  display: flex;
+  align-items: center;
+  transition: transform 0.3s ease-in-out;
+}
+
+/* Rotacija ikone kada je submenu otvoren */
+.menu__list-item--collapsed .menu__caret {
+  transform: rotate(-90deg);
+}
+
+/* Dodatno sređivanje layouta */
+.menu__list {
+  padding: 0;
+}
+
+.menu__list-item {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%; /* Osigurava da stavke menija idu do kraja */
+
+}
+.menu__link--sublist {
+  display: flex;
+  align-items: center;
+  width: 100%; /* Osigurava da zauzima cijeli prostor */
+}
+
+.menu__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%; /* Ovim se osigurava da zauzima cijelu širinu sidebara */
+  padding: 12px 16px; /* Povećava klikabilnu površinu */
+  box-sizing: border-box; /* Sprečava da padding smanji širinu */
+
+}
+
+
+.menu__link--sublist::after {
+  display: none !important;
+}
+
+
+/* Ikonica ide skroz desno */
+.menu__link--sublist {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  justify-content: space-between;
+}
+
+/* Ikonica na desnoj strani */
+.menu__link--sublist::before {
+  content: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='16' height='16' stroke='%23697586' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-left: auto; /* Ovo pomjera ikonicu skroz desno */
+  transition: transform 0.3s ease-in-out;
+  order: 2;
+
+}
+
+
+.menu__list-item--collapsed .menu__link--sublist::before {
+  transform: rotate(-90deg);
+}
+
+/* Dodaje vertikalnu liniju za proširene stavke */
+.menu__list-item {
+  position: relative;
+}
+
+/* Linija koja se pojavljuje kada je podmeni otvoren */
+.menu__list-item > .menu__list {
+  border-left: 1px solid #e0e0e0; /* Svjetlo siva linija */
+  margin-left: 12px; /* Povećava razmak između glavne stavke i podstavki */
+  padding-left: 8px; /* Daje malo prostora unutar podstavki */
+}
+
+/* Uklanja liniju za prvi nivo stavki */
+.menu__list {
+  border-left: none;
+}
+
+
+/* Uklanjanje linije sa main contenta */
+.theme-doc-sidebar-container {
+  border-right: none !important; /* Ako je linija od sidebar-a */
+}
+
+.theme-doc-main {
+  border-left: none !important; /* Ako je linija na main contentu */
+  margin-left: 40px !important;
+  padding-left: 40px !important;
+}
+.container {
+  max-width: 88% !important;
+  padding-left: 40px !important;
+}
+.breadcrumbs {
+  display: none !important;
+}
+/* Stilizacija slike */
+.doc-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  position: relative;
+  box-shadow: 0px 10px 20px rgba(0, 0, 0, 0.1); /* Blagi shadow */
+  filter: brightness(0.95) contrast(1.1) saturate(1.2);
+  transition: all 0.3s ease-in-out;
+}
+
+/* Overlay efekat */
+.doc-image::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.2); /* Svijetli overlay efekt */
+  border-radius: 12px; /* Mora biti isto kao border-radius slike */
+  pointer-events: none; /* Osigurava da overlay ne ometa interakciju */
+  filter: brightness(0.97) contrast(1.05);
+}
+
+/* Efekat na hover */
+.doc-image:hover {
+  filter: brightness(1.01)  blur(0.3px);
+  transform: scale(1.02);
+}
+
+#version-select {
+  display: block;
+  width: 100%;
+  padding: 14px 18px; /* Povećava padding za veću visinu */
+  font-size: 16px; /* Povećava veličinu fonta */
+  font-weight: 500;
+  color: #697586; /* Blago siva boja teksta */
+  background-color: #fff;
+  border: 1px solid #ddd; /* Svijetla siva ivica */
+  border-radius: 8px; /* Zaobljeni uglovi */
+  appearance: none; /* Sakriva defaultne stilove browsera */
+  cursor: pointer;
+  outline: none; /* Uklanja plavi outline na focusu */
+  transition: all 0.2s ease-in-out;
+  margin-top: 20px; /* Dodaje malo razmaka od vrha */
+  margin-bottom: 20px; /* Dodaje malo razmaka od dna */
+  position: relative; /* Omogućava pravilan položaj strelice */
+}
+
+/* Dodavanje prilagođene strelice */
+#version-select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+#version-select-wrapper::after {
+  content: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="15" stroke="%23697586" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="6 9 12 15 18 9"%3E%3C/polyline%3E%3C/svg%3E');
+
+  font-size: 12px;
+  color: #697586;
+  position: absolute;
+  top: 55%;
+
+  right: 15px; /* Pomjeranje strelice u desno */
+  transform: translateY(-50%);
+  pointer-events: none; /* Osigurava da strelica ne ometa interakciju */
+}
+
+/* Hover efekat */
+#version-select:hover {
+  border-color: #bbb;
+}
+
+/* Fokus efekat */
+#version-select:focus {
+  border-color: #673ab7; /* Ljubičasta nijansa na fokusu */
+}
+
+/* Za mobilne uređaje (do 768px širine) */
+@media screen and (max-width: 768px) {
+  .navbar {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  #__docusaurus {
+    max-width: 100%;
+    padding: 10px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  h2 {
+    font-size: 22px;
+  }
+
+  p {
+    font-size: 14px;
+  }
+
+  .menu__list {
+    padding: 0;
+  }
+
+  .menu__link {
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+
+  .doc-image {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Za vrlo male ekrane (do 480px) */
+@media screen and (max-width: 480px) {
+  .navbar {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  h1 {
+    font-size: 24px;
+    text-align: center;
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  p {
+    font-size: 13px;
+  }
+
+  .menu__link {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+
+  .doc-image {
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+  }
+}
+
+/* Sakrij Edit this page dugme */
+.theme-edit-this-page {
+  display: none !important;
+}
+
+
+
+
+/* Minimalistički moderni warning box za Docusaurus */
+.alert--warning {
+  background: #fff8ec; /* nježna žuta */
+  border-left: 4px solid #f5a623; /* decentna narandžasta */
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  color: #5c4400;
+  font-size: 15.5px;
+  font-weight: 500;
+  box-shadow: none;
+  position: relative;
+}
+
+
+

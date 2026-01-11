@@ -1,0 +1,286 @@
+.fullScreen {
+  display: flex;
+  flex-direction: column; /* Ikonice jedna ispod druge */
+  align-items: flex-start; /* Poravnaj na lijevu stranu */
+  justify-content: flex-start; /* Poravnaj na vrh */
+  height: 100vh;
+  background-image: url("https://images2.alphacoders.com/941/941898.jpg");
+  background-size: cover; /* Resize the background image to cover the entire container */
+  color: white;
+  padding: 20px;
+  gap: 1rem; /* Razmak između ikonica */
+}
+
+.animatedCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Centriraj tekst ispod ikonice */
+  justify-content: center;
+  width: auto; /* Širina prilagođena sadržaju */
+  margin-bottom: 1rem; /* Razmak između ikonica */
+}
+
+.link {
+  text-decoration: none; /* Ukloni podcrtavanje linka */
+  color: inherit; /* Naslijedi boju teksta */
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Centriraj ikonicu i tekst */
+  justify-content: center;
+}
+.file {
+  position: relative;
+  width: 80px; /* Smanjena širina ikonice */
+  height: 60px; /* Smanjena visina ikonice */
+  cursor: pointer;
+  transform-origin: bottom;
+  perspective: 1500px;
+  z-index: 50;
+}
+
+.work5 {
+  background-color: #d97706;
+  width: 100%;
+  height: 100%;
+  transform-origin: top;
+  border-radius: 6px; /* Smanjen border-radius */
+  border-top-left-radius: 0;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.work5::after {
+  content: '';
+  position: absolute;
+  bottom: 99%;
+  left: 0;
+  width: 30px; /* Smanjena širina */
+  height: 6px; /* Smanjena visina */
+  background-color: #d97706;
+  border-top-left-radius: 6px; /* Smanjen border-radius */
+  border-top-right-radius: 6px; /* Smanjen border-radius */
+}
+
+.work5::before {
+  content: '';
+  position: absolute;
+  top: -6px; /* Prilagođena pozicija */
+  left: 28px; /* Prilagođena pozicija */
+  width: 6px; /* Smanjena širina */
+  height: 6px; /* Smanjena visina */
+  background-color: #d97706;
+  clip-path: polygon(0 35%, 0% 100%, 50% 100%);
+}
+
+.work4 {
+  position: absolute;
+  inset: 2px; /* Smanjen inset */
+  background-color: #a1a1aa;
+  border-radius: 6px; /* Smanjen border-radius */
+  transition: all 0.3s ease;
+  transform-origin: bottom;
+}
+
+.work3 {
+  position: absolute;
+  inset: 4px; /* Smanjen inset */
+  background-color: #d4d4d8;
+  border-radius: 6px; /* Smanjen border-radius */
+  transition: all 0.3s ease;
+  transform-origin: bottom;
+}
+
+.work2 {
+  position: absolute;
+  inset: 6px; /* Smanjen inset */
+  background-color: #e4e4e7;
+  border-radius: 6px; /* Smanjen border-radius */
+  transition: all 0.3s ease;
+  transform-origin: bottom;
+}
+
+.work1 {
+  position: absolute;
+  bottom: 0;
+  background: linear-gradient(to top, #f59e0b, #fbbf24);
+  width: 100%;
+  height: 58px; /* Smanjena visina */
+  border-radius: 6px; /* Smanjen border-radius */
+  border-top-right-radius: 0;
+  transition: all 0.3s ease;
+  transform-origin: bottom;
+  display: flex;
+  align-items: flex-end;
+}
+
+.work1::after {
+  content: '';
+  position: absolute;
+  bottom: 99%;
+  right: 0;
+  width: 60px; /* Smanjena širina */
+  height: 6px; /* Smanjena visina */
+  background-color: #fbbf24;
+  border-top-right-radius: 6px; /* Smanjen border-radius */
+}
+
+.work1::before {
+  content: '';
+  position: absolute;
+  top: -4px; /* Prilagođena pozicija */
+  right: 58px; /* Prilagođena pozicija */
+  width: 5px; /* Smanjena širina */
+  height: 5px; /* Smanjena visina */
+  background-color: #fbbf24;
+  clip-path: polygon(100% 14%, 50% 100%, 100% 100%);
+}
+
+.file:hover .work5 {
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2); /* Smanjen box-shadow */
+}
+
+.file:hover .work4 {
+  transform: rotateX(-20deg);
+}
+
+.file:hover .work3 {
+  transform: rotateX(-30deg);
+}
+
+.file:hover .work2 {
+  transform: rotateX(-38deg);
+}
+
+.file:hover .work1 {
+  transform: rotateX(-46deg) translateY(1px);
+  box-shadow: inset 0 6px 12px #fbbf24, inset 0 -6px 12px #d97706; /* Smanjen box-shadow */
+}
+
+.cardText {
+  margin-top: 8px; /* Razmak između ikonice i teksta */
+  font-size: 12px; /* Smanjena veličina fonta */
+  padding: 6px 10px; /* Smanjen padding */
+  opacity: 1;
+  text-align: center; /* Centriranje teksta */
+  color: white; /* Bijeli tekst */
+  background-color: #245edb; /* Windows XP plava boja */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Lagana sjena */
+  display: inline-block; /* Omogućava da pozadina prilagodi veličinu tekstu */
+  border-radius: 4px; /* Zaobljeni kutovi */
+}
+
+.taskbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 40px;
+  background: linear-gradient(to bottom, #245edb 0%, #3f8cf3 9%, #245edb 18%, #245edb 92%, #333 100%);
+  display: flex;
+  align-items: center;
+  z-index: 1000;
+  box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.mainSection {
+  height: 100%;
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+  padding-left: 5px;
+}
+
+.startButton {
+  position: relative;
+  display: inline-block;
+  font-size: 18px;
+  color: white;
+  font-style: italic;
+  padding: 5px 25px 5px 15px;
+  text-shadow: 1px 1px 1px #333;
+  border-radius: 0 10px 15px 0;
+  border: none;
+  transform: skewX(-3deg);
+  left: -5px;
+  background: radial-gradient(circle, #5eac56 0%, #3c873c 100%);
+  box-shadow: 0 5px 10px #79ce71 inset;
+  cursor: pointer;
+}
+
+.startButton::before {
+  content: '';
+  background: url('https://i.ibb.co/Z6jG6w7c/pngwing-com.png') center/cover no-repeat;
+  position: relative;
+  display: inline-block;
+  height: 15px;
+  width: 15px;
+  top: 1px;
+  transform: skewX(3deg);
+  filter: drop-shadow(1px 1px 1px #333);
+}
+
+.taskbarIcons {
+  display: flex;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.taskbarIcon {
+  background-color: #4b6c9e;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.systemTray {
+  display: flex;
+  gap: 10px;
+  padding-right: 10px;
+}
+
+.systemTrayIcon {
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.selectionBox {
+  position: absolute;
+  border: 2px dashed #0078d7; /* Plava isprekidana linija */
+  background-color: rgba(0, 120, 215, 0.1); /* Prozirna plava pozadina */
+  pointer-events: none; /* Spriječi da pravougaonik blokira interakcije */
+}
+
+
+
+
+/* styles.module.css */
+.fullScreenNote {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 24px;
+  color: white;
+  text-align: center;
+  opacity: 0;
+  animation: fadeInSpread 2s ease-in-out forwards;
+}
+
+@keyframes fadeInSpread {
+  0% {
+    opacity: 0;
+    letter-spacing: 0;
+  }
+  50% {
+    opacity: 1;
+    letter-spacing: 10px;
+  }
+  100% {
+    opacity: 1;
+    letter-spacing: 5px;
+  }
+}
